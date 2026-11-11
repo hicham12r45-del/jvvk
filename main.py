@@ -1,30 +1,35 @@
 """
 ================================================================
-PROCEDURAL CASTLE WITH FULLY-VISIBLE INTERIOR
+PROCEDURAL MEDIEVAL CASTLE — FULLY-VISIBLE INTERIOR EDITION
 ================================================================
-A complete procedural Blender scene that builds a medieval castle
-with a deliberately-lowered front wall so the entire interior is
-visible from the camera at once.
+This script builds a complete procedural medieval castle scene
+with a deliberately low front wall so that the entire interior
+(throne room, bedroom, library, kitchen, chapel, treasure room)
+is visible from the camera at once.
 
-Key features
-------------
-  * Four cylindrical corner towers with conical roofs and flags
-  * Curtain walls with crenellations (battlements)
-  * Low front wall + gate opening + iron portcullis
-  * Interior floor split into four themed rooms:
-      - Throne room (center)
-      - Bedroom (front-left)
-      - Kitchen (front-right)
-      - Library (back-left)
-  * Fully furnished rooms with detailed geometry
-  * Procedural stone / wood / fabric materials
-  * Fireplace, chandelier, candelabras, torches, banners
-  * Armor stand, weapon rack, well, barrels, chests
-  * Sun + interior point lights for readability
-  * Cameras aimed to reveal the interior
-  * GLB export ready to use anywhere
+Contents
+--------
+  * Moat with animated-look water surface
+  * Drawbridge with chains and counter-weights
+  * Stone stairs, paved courtyard, path
+  * Four corner towers with crenellations, roof, flags
+  * Curtain walls with battlements
+  * Gate with portcullis
+  * Stained-glass-style windows
+  * Throne room (dais, throne, long table, chandelier)
+  * Bedroom (bed, wardrobe, mirror, nightstand, chest)
+  * Library (bookshelves, reading table, globe, ladder)
+  * Kitchen (cauldron, barrels, stove, hanging pots)
+  * Chapel (altar, cross, pews, candles)
+  * Treasure room (chests, gold, crowns)
+  * Weapon rack, shield, armor stand
+  * Outdoor scenery: trees, bushes, flowers, fountain,
+    statue, benches, cart, stables, horse, catapult
+  * Full lighting rig (sun + per-room point lights)
+  * Main camera aimed at the interior
+  * GLB export to out/model.glb
 
-Blender compatibility: tested API for Blender 3.6 LTS and 4.x
+Blender 4.2 LTS compatible.
 ================================================================
 """
 
@@ -35,17 +40,17 @@ import os
 import sys
 import traceback
 import pathlib
-import mathutils
-from mathutils import Vector, Euler
+from mathutils import Vector
 
 
 # ================================================================
 # SCENE CONSTANTS
 # ================================================================
-CASTLE_HALF        = 6.5       # Half width of the outer footprint
-WALL_THICKNESS     = 0.6       # Curtain wall thickness
-WALL_HEIGHT_BACK   = 6.0       # Height of back / side walls
-WALL_HEIGHT_FRONT  = 2.5       # Front wall kept LOW for visibility
+CASTLE_HALF        = 6.5
+WALL_THICKNESS     = 0.6
+WALL_HEIGHT_BACK   = 6.0
+WALL_HEIGHT_FRONT  = 2.5
+WALL_HEIGHT_SIDE   = 6.0
 TOWER_RADIUS       = 1.8
 TOWER_HEIGHT       = 9.0
 TOWER_ROOF_HEIGHT  = 3.0
@@ -58,8 +63,10 @@ GATE_WIDTH         = 3.0
 GATE_ARCH_HEIGHT   = 3.2
 GATE_PILLAR_SIZE   = 0.7
 FLOOR_THICKNESS    = 0.1
+MOAT_WIDTH         = 3.5
+MOAT_DEPTH         = 1.2
 EXPORT_DIR_NAME    = "out"
-EXPORT_FILENAME    = "castle.glb"
+EXPORT_FILENAME    = "model.glb"
 
 
 # ================================================================
@@ -72,7 +79,6 @@ MATS = {}
 # SCENE UTILITIES
 # ================================================================
 def clear_scene():
-    """Reset Blender to an empty scene."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     for coll in list(bpy.data.collections):
         try:
@@ -82,14 +88,12 @@ def clear_scene():
 
 
 def create_collection(name):
-    """Create a new collection and return it."""
     coll = bpy.data.collections.new(name)
     bpy.context.scene.collection.children.link(coll)
     return coll
 
 
 def link_to_collection(obj, collection):
-    """Move `obj` from its current collections into `collection`."""
     for c in list(obj.users_collection):
         c.objects.unlink(obj)
     collection.objects.link(obj)
@@ -110,7 +114,6 @@ def select_only(obj):
 # ================================================================
 def add_box(name, location, dimensions, material=None,
             collection=None, rotation=(0, 0, 0)):
-    """Axis-aligned box of given dimensions at location."""
     bpy.ops.mesh.primitive_cube_add(
         size=1.0, location=location, rotation=rotation)
     obj = bpy.context.active_object
@@ -183,6 +186,34 @@ def add_torus(name, location, major_radius, minor_radius, material=None,
     return obj
 
 
+def add_plane(name, location, size, material=None,
+              collection=None, rotation=(0, 0, 0)):
+    bpy.ops.mesh.primitive_plane_add(
+        size=size, location=location, rotation=rotation)
+    obj = bpy.context.active_object
+    obj.name = name
+    if material:
+        obj.data.materials.append(material)
+    if collection:
+        link_to_collection(obj, collection)
+    return obj
+
+
+def add_prism(name, location, radius, depth, sides=6,
+              material=None, collection=None, rotation=(0, 0, 0)):
+    """Create a low-poly prism for gems and crystals."""
+    bpy.ops.mesh.primitive_cylinder_add(
+        radius=radius, depth=depth, vertices=sides,
+        location=location, rotation=rotation)
+    obj = bpy.context.active_object
+    obj.name = name
+    if material:
+        obj.data.materials.append(material)
+    if collection:
+        link_to_collection(obj, collection)
+    return obj
+
+
 # ================================================================
 # MATERIAL BUILDERS
 # ================================================================
@@ -220,20 +251,17 @@ def make_stone_material(name="Stone", base=(0.55, 0.52, 0.48)):
     links = mat.node_tree.links
     for n in list(nodes):
         nodes.remove(n)
-
     output = nodes.new("ShaderNodeOutputMaterial")
     output.location = (700, 0)
     bsdf = nodes.new("ShaderNodeBsdfPrincipled")
     bsdf.location = (400, 0)
     bsdf.inputs["Metallic"].default_value = 0.0
     bsdf.inputs["Roughness"].default_value = 0.95
-
     noise = nodes.new("ShaderNodeTexNoise")
     noise.location = (-400, 0)
     noise.inputs["Scale"].default_value = 8.0
     noise.inputs["Detail"].default_value = 10.0
     noise.inputs["Roughness"].default_value = 0.65
-
     ramp = nodes.new("ShaderNodeValToRGB")
     ramp.location = (-100, 0)
     dark = (base[0] * 0.7, base[1] * 0.7, base[2] * 0.7, 1)
@@ -243,7 +271,6 @@ def make_stone_material(name="Stone", base=(0.55, 0.52, 0.48)):
     ramp.color_ramp.elements[0].color = dark
     ramp.color_ramp.elements[1].position = 0.7
     ramp.color_ramp.elements[1].color = light
-
     links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
     links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
     links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
@@ -257,20 +284,17 @@ def make_wood_material(name="Wood", base=(0.45, 0.28, 0.15)):
     links = mat.node_tree.links
     for n in list(nodes):
         nodes.remove(n)
-
     output = nodes.new("ShaderNodeOutputMaterial")
     output.location = (700, 0)
     bsdf = nodes.new("ShaderNodeBsdfPrincipled")
     bsdf.location = (400, 0)
     bsdf.inputs["Metallic"].default_value = 0.0
     bsdf.inputs["Roughness"].default_value = 0.75
-
     texcoord = nodes.new("ShaderNodeTexCoord")
     texcoord.location = (-800, 0)
     mapping = nodes.new("ShaderNodeMapping")
     mapping.location = (-600, 0)
     mapping.inputs["Scale"].default_value = (1.0, 25.0, 1.0)
-
     wave = nodes.new("ShaderNodeTexWave")
     wave.location = (-350, 0)
     wave.wave_type = 'BANDS'
@@ -278,7 +302,6 @@ def make_wood_material(name="Wood", base=(0.45, 0.28, 0.15)):
     wave.inputs["Scale"].default_value = 2.5
     wave.inputs["Distortion"].default_value = 5.0
     wave.inputs["Detail"].default_value = 3.0
-
     ramp = nodes.new("ShaderNodeValToRGB")
     ramp.location = (-100, 0)
     dark = (base[0] * 0.6, base[1] * 0.6, base[2] * 0.6, 1)
@@ -288,7 +311,6 @@ def make_wood_material(name="Wood", base=(0.45, 0.28, 0.15)):
     ramp.color_ramp.elements[0].color = dark
     ramp.color_ramp.elements[1].position = 0.75
     ramp.color_ramp.elements[1].color = light
-
     links.new(texcoord.outputs["Generated"], mapping.inputs["Vector"])
     links.new(mapping.outputs["Vector"], wave.inputs["Vector"])
     links.new(wave.outputs["Fac"], ramp.inputs["Fac"])
@@ -305,12 +327,10 @@ def make_fabric_material(name, color, roughness=0.9):
     bsdf = nodes.get("Principled BSDF")
     bsdf.inputs["Metallic"].default_value = 0.0
     bsdf.inputs["Roughness"].default_value = roughness
-
     noise = nodes.new("ShaderNodeTexNoise")
     noise.location = (-400, 0)
     noise.inputs["Scale"].default_value = 70.0
     noise.inputs["Detail"].default_value = 2.0
-
     ramp = nodes.new("ShaderNodeValToRGB")
     ramp.location = (-100, 0)
     dark = (color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, 1)
@@ -323,22 +343,39 @@ def make_fabric_material(name, color, roughness=0.9):
     return mat
 
 
+def make_glass_material(name, color, transmission=0.9):
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    bsdf = nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["Roughness"].default_value = 0.05
+    # Blender 4.x uses "Transmission Weight"
+    if "Transmission Weight" in bsdf.inputs:
+        bsdf.inputs["Transmission Weight"].default_value = transmission
+    elif "Transmission" in bsdf.inputs:
+        bsdf.inputs["Transmission"].default_value = transmission
+    return mat
+
+
 def build_all_materials():
-    """Populate the MATS dictionary with every material we need."""
-    MATS["stone"]       = make_stone_material("Stone",       (0.58, 0.55, 0.50))
-    MATS["stone_dark"]  = make_stone_material("StoneDark",   (0.34, 0.32, 0.29))
-    MATS["stone_light"] = make_stone_material("StoneLight",  (0.76, 0.73, 0.67))
-    MATS["stone_floor"] = make_stone_material("StoneFloor",  (0.66, 0.63, 0.58))
+    MATS["stone"]        = make_stone_material("Stone",       (0.58, 0.55, 0.50))
+    MATS["stone_dark"]   = make_stone_material("StoneDark",   (0.34, 0.32, 0.29))
+    MATS["stone_light"]  = make_stone_material("StoneLight",  (0.76, 0.73, 0.67))
+    MATS["stone_floor"]  = make_stone_material("StoneFloor",  (0.66, 0.63, 0.58))
+    MATS["stone_mossy"]  = make_stone_material("StoneMossy",  (0.42, 0.52, 0.35))
 
-    MATS["wood"]        = make_wood_material("Wood",        (0.45, 0.28, 0.15))
-    MATS["wood_dark"]   = make_wood_material("WoodDark",    (0.24, 0.14, 0.07))
-    MATS["wood_light"]  = make_wood_material("WoodLight",   (0.68, 0.47, 0.26))
-    MATS["wood_plank"]  = make_wood_material("WoodPlank",   (0.55, 0.36, 0.20))
+    MATS["wood"]         = make_wood_material("Wood",        (0.45, 0.28, 0.15))
+    MATS["wood_dark"]    = make_wood_material("WoodDark",    (0.24, 0.14, 0.07))
+    MATS["wood_light"]   = make_wood_material("WoodLight",   (0.68, 0.47, 0.26))
+    MATS["wood_plank"]   = make_wood_material("WoodPlank",   (0.55, 0.36, 0.20))
 
-    MATS["iron"]        = make_simple_material("Iron",   (0.18, 0.18, 0.20), 1.0, 0.5)
-    MATS["gold"]        = make_simple_material("Gold",   (0.95, 0.75, 0.25), 1.0, 0.25)
-    MATS["steel"]       = make_simple_material("Steel",  (0.62, 0.62, 0.68), 1.0, 0.35)
-    MATS["bronze"]      = make_simple_material("Bronze", (0.70, 0.45, 0.15), 0.9, 0.35)
+    MATS["iron"]         = make_simple_material("Iron",   (0.18, 0.18, 0.20), 1.0, 0.5)
+    MATS["gold"]         = make_simple_material("Gold",   (0.95, 0.75, 0.25), 1.0, 0.25)
+    MATS["steel"]        = make_simple_material("Steel",  (0.62, 0.62, 0.68), 1.0, 0.35)
+    MATS["bronze"]       = make_simple_material("Bronze", (0.70, 0.45, 0.15), 0.9, 0.35)
+    MATS["silver"]       = make_simple_material("Silver", (0.82, 0.82, 0.86), 1.0, 0.25)
 
     MATS["fabric_red"]    = make_fabric_material("FabricRed",    (0.55, 0.08, 0.08))
     MATS["fabric_blue"]   = make_fabric_material("FabricBlue",   (0.10, 0.15, 0.55))
@@ -347,55 +384,298 @@ def build_all_materials():
     MATS["fabric_white"]  = make_fabric_material("FabricWhite",  (0.92, 0.92, 0.88))
     MATS["fabric_brown"]  = make_fabric_material("FabricBrown",  (0.30, 0.20, 0.10))
     MATS["fabric_gold"]   = make_fabric_material("FabricGold",   (0.80, 0.65, 0.25))
+    MATS["fabric_black"]  = make_fabric_material("FabricBlack",  (0.05, 0.05, 0.05))
 
-    MATS["grass"]       = make_simple_material("Grass",  (0.16, 0.34, 0.12), 0.0, 1.0)
-    MATS["dirt"]        = make_simple_material("Dirt",   (0.30, 0.22, 0.15), 0.0, 1.0)
-    MATS["water"]       = make_simple_material("Water",  (0.10, 0.25, 0.50), 0.2, 0.05)
-    MATS["glass"]       = make_simple_material("Glass",  (0.72, 0.82, 0.95), 0.05, 0.05)
-    MATS["leather"]     = make_simple_material("Leather",(0.35, 0.20, 0.10), 0.0, 0.85)
+    MATS["grass"]         = make_simple_material("Grass",  (0.16, 0.34, 0.12), 0.0, 1.0)
+    MATS["dirt"]          = make_simple_material("Dirt",   (0.30, 0.22, 0.15), 0.0, 1.0)
+    MATS["water"]         = make_simple_material("Water",  (0.10, 0.25, 0.50), 0.2, 0.05)
+    MATS["water_deep"]    = make_simple_material("WaterDeep", (0.05, 0.15, 0.35), 0.2, 0.05)
+    MATS["leather"]       = make_simple_material("Leather",(0.35, 0.20, 0.10), 0.0, 0.85)
 
-    MATS["fire"]        = make_emission_material("Fire",        (1.0, 0.42, 0.10), 9.0)
-    MATS["ember"]       = make_emission_material("Ember",       (1.0, 0.20, 0.05), 4.0)
-    MATS["candle"]      = make_emission_material("Candle",      (1.0, 0.85, 0.55), 3.5)
-    MATS["window_light"]= make_emission_material("WindowLight", (1.0, 0.85, 0.55), 1.5)
+    MATS["glass_blue"]    = make_glass_material("GlassBlue",   (0.55, 0.75, 0.95))
+    MATS["glass_red"]     = make_glass_material("GlassRed",    (0.95, 0.35, 0.30))
+    MATS["glass_green"]   = make_glass_material("GlassGreen",  (0.30, 0.85, 0.40))
+    MATS["glass_yellow"]  = make_glass_material("GlassYellow", (0.95, 0.90, 0.30))
+
+    MATS["fire"]          = make_emission_material("Fire",        (1.0, 0.42, 0.10), 9.0)
+    MATS["ember"]         = make_emission_material("Ember",       (1.0, 0.20, 0.05), 4.0)
+    MATS["candle"]        = make_emission_material("Candle",      (1.0, 0.85, 0.55), 3.5)
+    MATS["window_light"]  = make_emission_material("WindowLight", (1.0, 0.85, 0.55), 1.5)
+    MATS["lantern"]       = make_emission_material("Lantern",     (1.0, 0.70, 0.35), 4.0)
+
+    MATS["gem_ruby"]      = make_simple_material("GemRuby",    (0.85, 0.05, 0.10), 0.0, 0.1)
+    MATS["gem_sapphire"]  = make_simple_material("GemSapphire",(0.10, 0.20, 0.85), 0.0, 0.1)
+    MATS["gem_emerald"]   = make_simple_material("GemEmerald", (0.05, 0.75, 0.30), 0.0, 0.1)
 
 
 # ================================================================
-# GROUND AND OUTDOOR
+# GROUND
 # ================================================================
 def build_ground(collection):
-    """Ground plane + a dirt path leading to the gate."""
-    bpy.ops.mesh.primitive_plane_add(size=120, location=(0, 0, -0.05))
+    bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, -0.05))
     plane = bpy.context.active_object
     plane.name = "Ground"
     plane.data.materials.append(MATS["grass"])
     link_to_collection(plane, collection)
 
-    add_box(
-        "DirtPath", (0, -11.0, -0.04), (4.0, 12.0, 0.02),
-        material=MATS["dirt"], collection=collection,
-    )
+    add_box("DirtPath", (0, -14.0, -0.04), (4.0, 16.0, 0.02),
+            material=MATS["dirt"], collection=collection)
 
 
-def build_outdoor_well(collection, x, y):
-    """Stone well with wooden roof."""
+# ================================================================
+# MOAT
+# ================================================================
+def build_moat(collection):
+    """Ring moat around the castle."""
+    outer = CASTLE_HALF + MOAT_WIDTH
+    inner = CASTLE_HALF + 0.6
+
+    # Moat floor
+    for name, x, y, sx, sy in [
+        ("MoatBack",  0, outer, (inner + 1.0) * 2, MOAT_WIDTH),
+        ("MoatFront", 0, -outer, (inner + 1.0) * 2, MOAT_WIDTH),
+        ("MoatLeft",  -outer, 0, MOAT_WIDTH, inner * 2 + 1.0),
+        ("MoatRight", outer, 0, MOAT_WIDTH, inner * 2 + 1.0),
+    ]:
+        add_box(name + "Floor", (x, y, -MOAT_DEPTH),
+                (sx, sy, 0.05), material=MATS["dirt"],
+                collection=collection)
+        add_box(name + "Water", (x, y, -MOAT_DEPTH + 0.4),
+                (sx, sy, 0.02), material=MATS["water"],
+                collection=collection)
+
+    # Inner bank (raised stone border)
+    for name, x, y, sx, sy in [
+        ("BankBack",  0, inner,  (inner + 1.0) * 2, 0.4),
+        ("BankFront", 0, -inner, (inner + 1.0) * 2, 0.4),
+        ("BankLeft",  -inner, 0, 0.4, inner * 2 + 1.0),
+        ("BankRight", inner, 0,  0.4, inner * 2 + 1.0),
+    ]:
+        add_box(name, (x, y, 0.1), (sx, sy, 0.2),
+                material=MATS["stone_mossy"],
+                collection=collection)
+
+    # Small reeds / plants around the moat
+    import random
+    random.seed(42)
+    for i in range(24):
+        side = i % 4
+        if side == 0:
+            px = -outer + MOAT_WIDTH * (0.3 + 0.4 * random.random())
+            py = outer + MOAT_WIDTH * 0.45
+        elif side == 1:
+            px = -outer + MOAT_WIDTH * (0.3 + 0.4 * random.random())
+            py = -outer - MOAT_WIDTH * 0.45
+        elif side == 2:
+            px = -outer - MOAT_WIDTH * 0.45
+            py = -outer + MOAT_WIDTH * (0.3 + 0.4 * random.random())
+        else:
+            px = outer + MOAT_WIDTH * 0.45
+            py = -outer + MOAT_WIDTH * (0.3 + 0.4 * random.random())
+        add_cylinder(f"Reed_{i}", (px, py, -MOAT_DEPTH + 0.9),
+                     0.02, 1.0,
+                     material=MATS["grass"],
+                     collection=collection, vertices=6)
+
+
+# ================================================================
+# DRAWBRIDGE
+# ================================================================
+def build_drawbridge(collection):
+    """A wooden drawbridge over the front moat."""
+    outer = CASTLE_HALF + MOAT_WIDTH
+    front_y = -CASTLE_HALF
+    far_y = -outer - 0.5
+    length = abs(front_y - far_y)
+    cy = (front_y + far_y) / 2
+
+    # Deck
+    n_planks = 20
+    plank_len = length / n_planks
+    for i in range(n_planks):
+        py = far_y + (i + 0.5) * plank_len
+        add_box(f"BridgePlank_{i}", (0, py, 0.15),
+                (GATE_WIDTH + 0.2, plank_len * 0.9, 0.08),
+                material=MATS["wood_plank"],
+                collection=collection)
+
+    # Side rails
+    for side, sx in [("L", -GATE_WIDTH / 2 - 0.15),
+                     ("R", GATE_WIDTH / 2 + 0.15)]:
+        add_box(f"BridgeRail_{side}", (sx, cy, 0.6),
+                (0.1, length, 0.1),
+                material=MATS["wood_dark"],
+                collection=collection)
+        for i in range(6):
+            py = far_y + (i + 0.5) * (length / 6)
+            add_box(f"BridgePost_{side}_{i}", (sx, py, 0.4),
+                    (0.1, 0.1, 0.5),
+                    material=MATS["wood_dark"],
+                    collection=collection)
+
+    # Chains up to gate towers
+    for side, sx in [("L", -GATE_WIDTH / 2 - 0.15),
+                     ("R", GATE_WIDTH / 2 + 0.15)]:
+        add_cylinder(f"BridgeChain_{side}", (sx, front_y - 0.2, 1.8),
+                     0.03, 2.4,
+                     material=MATS["iron"],
+                     collection=collection, vertices=8,
+                     rotation=(math.radians(30), 0, 0))
+
+
+# ================================================================
+# STONE STAIRS AND PAVED AREA
+# ================================================================
+def build_stairs(collection):
+    """Stone steps leading up to the gate."""
+    outer = CASTLE_HALF + MOAT_WIDTH
+    stairs_start = -outer - 1.0
+    n_steps = 4
+    for i in range(n_steps):
+        z = 0.1 + i * 0.08
+        y = stairs_start + i * 0.35
+        add_box(f"Stair_{i}", (0, y, z),
+                (GATE_WIDTH + 0.4, 0.35, z * 2),
+                material=MATS["stone_light"],
+                collection=collection)
+
+    # Paved courtyard in front of gate
+    add_box("GateCourtyard", (0, -outer - 2.5, 0.02),
+            (GATE_WIDTH + 2.0, 2.0, 0.05),
+            material=MATS["stone_light"],
+            collection=collection)
+
+
+# ================================================================
+# TREES AND VEGETATION
+# ================================================================
+def build_tree(collection, name, x, y, scale=1.0, seed=0):
+    """Procedural tree with trunk, branches, and layered foliage."""
+    trunk_height = 2.5 * scale
+    add_cylinder(f"{name}_Trunk", (x, y, trunk_height / 2),
+                 0.25 * scale, trunk_height,
+                 material=MATS["wood_dark"],
+                 collection=collection, vertices=8)
+
+    # Three branches
+    for i, (dx, dy, dz, ang) in enumerate([
+        (0.3, 0.3, 1.8, 0.7),
+        (-0.3, -0.2, 2.1, -0.9),
+        (0.0, 0.4, 2.4, 1.2),
+    ]):
+        bx = x + dx * scale
+        by = y + dy * scale
+        bz = dz * scale
+        add_cylinder(f"{name}_Branch_{i}", (bx, by, bz),
+                     0.08 * scale, 0.8 * scale,
+                     material=MATS["wood_dark"],
+                     collection=collection, vertices=6,
+                     rotation=(0, ang, 0))
+
+    # Three foliage clusters
+    import random
+    rng = random.Random(seed)
+    for i in range(3):
+        ox = rng.uniform(-0.4, 0.4) * scale
+        oy = rng.uniform(-0.4, 0.4) * scale
+        oz = (2.8 + i * 0.5) * scale
+        rad = (0.9 - i * 0.15) * scale
+        add_sphere(f"{name}_Foliage_{i}", (x + ox, y + oy, oz),
+                   rad, material=MATS["grass"],
+                   collection=collection, segments=16, rings=12)
+
+
+def build_trees(collection):
+    positions = [
+        (-15.0, -8.0, 1.2, 1),
+        (-13.0, -14.0, 1.0, 2),
+        (14.0, -10.0, 1.3, 3),
+        (16.0, -15.0, 1.1, 4),
+        (-18.0, 3.0, 1.4, 5),
+        (18.0, 4.0, 1.2, 6),
+        (0.0, 15.0, 1.5, 7),
+        (-8.0, 14.0, 1.1, 8),
+        (9.0, 16.0, 1.3, 9),
+    ]
+    for i, (x, y, s, seed) in enumerate(positions):
+        build_tree(collection, f"Tree_{i}", x, y, scale=s, seed=seed)
+
+
+def build_bush(collection, name, x, y, scale=1.0):
+    add_sphere(f"{name}_Main", (x, y, 0.4 * scale), 0.5 * scale,
+               material=MATS["grass"], collection=collection,
+               segments=14, rings=10)
+    add_sphere(f"{name}_Side1", (x + 0.3 * scale, y + 0.1 * scale,
+                                  0.35 * scale), 0.35 * scale,
+               material=MATS["grass"], collection=collection,
+               segments=12, rings=8)
+    add_sphere(f"{name}_Side2", (x - 0.25 * scale, y - 0.15 * scale,
+                                  0.32 * scale), 0.32 * scale,
+               material=MATS["grass"], collection=collection,
+               segments=12, rings=8)
+
+
+def build_bushes(collection):
+    positions = [
+        (-10.0, -5.0, 0.9),
+        (-10.5, -8.0, 1.1),
+        (11.0, -6.5, 1.0),
+        (12.5, -3.0, 0.8),
+        (-12.0, 2.0, 1.0),
+        (13.0, 2.5, 0.9),
+        (0.0, 12.0, 1.2),
+        (-5.0, 11.5, 1.0),
+        (5.0, 12.5, 0.9),
+    ]
+    for i, (x, y, s) in enumerate(positions):
+        build_bush(collection, f"Bush_{i}", x, y, s)
+
+
+def build_flowers(collection):
+    """Small flower patches."""
+    import random
+    rng = random.Random(101)
+    colors = ["fabric_red", "fabric_blue", "fabric_purple",
+              "fabric_white", "fabric_gold"]
+    patches = [
+        (-9.0, -6.0), (10.0, -7.0), (-11.0, 1.5),
+        (11.5, 1.5), (0.0, 11.0), (-4.0, 11.0), (4.0, 12.0),
+    ]
+    for pi, (px, py) in enumerate(patches):
+        for fi in range(6):
+            ox = rng.uniform(-0.6, 0.6)
+            oy = rng.uniform(-0.6, 0.6)
+            mat = MATS[colors[fi % len(colors)]]
+            add_cylinder(f"Flower_{pi}_{fi}_Stem",
+                         (px + ox, py + oy, 0.1),
+                         0.015, 0.2,
+                         material=MATS["grass"],
+                         collection=collection, vertices=4)
+            add_sphere(f"Flower_{pi}_{fi}_Head",
+                       (px + ox, py + oy, 0.22),
+                       0.06, material=mat,
+                       collection=collection,
+                       segments=8, rings=6)
+
+
+# ================================================================
+# OUTDOOR FURNITURE
+# ================================================================
+def build_well(collection, x, y):
     add_cylinder("WellBody", (x, y, 0.6), 1.0, 1.2,
                  material=MATS["stone"], collection=collection, vertices=24)
     add_cylinder("WellInner", (x, y, 0.6), 0.85, 1.2,
                  material=MATS["stone_dark"], collection=collection, vertices=24)
     add_cylinder("WellWater", (x, y, 0.2), 0.85, 0.02,
                  material=MATS["water"], collection=collection, vertices=24)
-    # Two posts
     for side, dx in [("L", -0.9), ("R", 0.9)]:
         add_box(f"WellPost_{side}", (x + dx, y, 1.85),
                 (0.12, 0.12, 2.5),
                 material=MATS["wood_dark"], collection=collection)
-    # Roof
     add_box("WellRoof", (x, y, 3.15), (2.4, 1.6, 0.15),
             material=MATS["wood"], collection=collection)
     add_cone("WellRoofTop", (x, y, 3.45), 1.3, 0.0, 0.5,
              material=MATS["wood_dark"], collection=collection, vertices=4)
-    # Bucket
     add_cylinder("WellBucket", (x, y, 2.3), 0.18, 0.25,
                  material=MATS["wood_dark"], collection=collection, vertices=12)
     add_cylinder("WellRope", (x, y, 2.75), 0.02, 0.6,
@@ -403,7 +683,6 @@ def build_outdoor_well(collection, x, y):
 
 
 def build_horse_trough(collection, x, y):
-    """Wooden horse trough with water."""
     add_box("TroughBody", (x, y, 0.35), (2.0, 0.8, 0.7),
             material=MATS["wood_dark"], collection=collection)
     add_box("TroughWater", (x, y, 0.63), (1.85, 0.65, 0.05),
@@ -414,8 +693,249 @@ def build_horse_trough(collection, x, y):
                 material=MATS["wood_dark"], collection=collection)
 
 
+def build_fountain(collection, x, y):
+    """Decorative outdoor fountain."""
+    add_cylinder("FountainBase", (x, y, 0.1), 2.2, 0.2,
+                 material=MATS["stone_light"], collection=collection, vertices=32)
+    add_cylinder("FountainRim", (x, y, 0.35), 2.1, 0.3,
+                 material=MATS["stone"], collection=collection, vertices=32)
+    add_cylinder("FountainWater", (x, y, 0.46), 2.0, 0.02,
+                 material=MATS["water"], collection=collection, vertices=32)
+    add_cylinder("FountainPillar", (x, y, 1.4), 0.35, 2.0,
+                 material=MATS["stone_light"], collection=collection, vertices=16)
+    add_cylinder("FountainBowl", (x, y, 2.4), 0.8, 0.25,
+                 material=MATS["stone"], collection=collection, vertices=24)
+    add_cylinder("FountainBowlWater", (x, y, 2.55), 0.7, 0.02,
+                 material=MATS["water"], collection=collection, vertices=24)
+    add_cylinder("FountainTop", (x, y, 2.9), 0.15, 0.6,
+                 material=MATS["stone_light"], collection=collection, vertices=12)
+    add_sphere("FountainFinial", (x, y, 3.3), 0.22,
+               material=MATS["gold"], collection=collection,
+               segments=16, rings=12)
+    # Water jets (small spheres)
+    for i in range(8):
+        angle = 2 * math.pi * i / 8
+        dx = math.cos(angle) * 0.4
+        dy = math.sin(angle) * 0.4
+        add_sphere(f"FountainJet_{i}", (x + dx, y + dy, 2.6),
+                   0.06, material=MATS["water"],
+                   collection=collection, segments=8, rings=6)
+
+
+def build_statue(collection, x, y):
+    """Stone knight statue on a pedestal."""
+    add_box("StatuePedestal", (x, y, 0.6), (1.6, 1.6, 1.2),
+            material=MATS["stone_dark"], collection=collection)
+    add_box("StatuePlinth", (x, y, 1.35), (1.4, 1.4, 0.3),
+            material=MATS["stone"], collection=collection)
+    # Body
+    add_box("StatueBody", (x, y, 2.3), (0.8, 0.5, 1.4),
+            material=MATS["stone_light"], collection=collection)
+    # Head
+    add_sphere("StatueHead", (x, y, 3.2), 0.28,
+               material=MATS["stone_light"], collection=collection,
+               segments=16, rings=12)
+    # Sword
+    add_box("StatueSword", (x + 0.55, y, 2.0), (0.08, 0.08, 1.8),
+            material=MATS["stone_light"], collection=collection)
+    add_box("StatueSwordGuard", (x + 0.55, y, 2.8), (0.35, 0.12, 0.1),
+            material=MATS["stone_light"], collection=collection)
+    # Shield
+    add_box("StatueShield", (x - 0.4, y, 2.4), (0.5, 0.1, 0.9),
+            material=MATS["stone_light"], collection=collection)
+    add_torus("StatueShieldRim", (x - 0.4, y, 2.4), 0.25, 0.04,
+              material=MATS["stone_light"], collection=collection,
+              rotation=(0, math.pi / 2, 0))
+    # Cape
+    add_box("StatueCape", (x, y + 0.3, 2.2), (0.9, 0.1, 1.2),
+            material=MATS["stone_light"], collection=collection)
+
+
+def build_bench(collection, name, x, y, rotation=0):
+    add_box(f"{name}_Seat", (x, y, 0.45), (1.6, 0.5, 0.08),
+            material=MATS["wood"], collection=collection,
+            rotation=(0, 0, rotation))
+    add_box(f"{name}_Back", (x, y + 0.22, 0.75), (1.6, 0.08, 0.55),
+            material=MATS["wood"], collection=collection,
+            rotation=(0, 0, rotation))
+    for i, dx in enumerate([-0.65, 0.65]):
+        add_box(f"{name}_Leg_{i}", (x + dx, y, 0.22),
+                (0.1, 0.45, 0.45),
+                material=MATS["wood_dark"], collection=collection,
+                rotation=(0, 0, rotation))
+
+
+def build_benches(collection):
+    build_bench(collection, "Bench1", -8.5, -7.5, 0)
+    build_bench(collection, "Bench2", 8.5, -7.5, math.pi)
+    build_bench(collection, "Bench3", 0.0, 10.5, math.pi)
+
+
+def build_lamp_post(collection, name, x, y):
+    add_cylinder(f"{name}_Pole", (x, y, 1.6), 0.08, 3.2,
+                 material=MATS["iron"], collection=collection, vertices=8)
+    add_cylinder(f"{name}_Base", (x, y, 0.05), 0.25, 0.15,
+                 material=MATS["iron"], collection=collection, vertices=12)
+    add_box(f"{name}_Bracket", (x, y - 0.35, 3.15), (0.05, 0.7, 0.05),
+            material=MATS["iron"], collection=collection)
+    add_cylinder(f"{name}_Lantern", (x, y - 0.7, 2.85), 0.2, 0.5,
+                 material=MATS["lantern"], collection=collection, vertices=6)
+    add_cone(f"{name}_Cap", (x, y - 0.7, 3.2), 0.28, 0.05, 0.2,
+             material=MATS["iron"], collection=collection, vertices=6)
+
+
+def build_lamps(collection):
+    build_lamp_post(collection, "Lamp1", -5.0, -8.0)
+    build_lamp_post(collection, "Lamp2", 5.0, -8.0)
+    build_lamp_post(collection, "Lamp3", -8.0, 5.0)
+    build_lamp_post(collection, "Lamp4", 8.0, 5.0)
+
+
+def build_cart(collection, x, y):
+    """Wooden cart with wheels and load."""
+    add_box("CartBed", (x, y, 0.6), (2.0, 1.2, 0.15),
+            material=MATS["wood"], collection=collection)
+    add_box("CartSideL", (x - 0.95, y, 0.85), (0.1, 1.2, 0.5),
+            material=MATS["wood_plank"], collection=collection)
+    add_box("CartSideR", (x + 0.95, y, 0.85), (0.1, 1.2, 0.5),
+            material=MATS["wood_plank"], collection=collection)
+    add_box("CartBack", (x, y + 0.55, 0.85), (2.0, 0.1, 0.5),
+            material=MATS["wood_plank"], collection=collection)
+    # Wheels
+    for side, dy in [("F", -0.7), ("B", 0.7)]:
+        for lr, dx in [("L", -0.9), ("R", 0.9)]:
+            add_cylinder(f"CartWheel_{side}{lr}", (x + dx, y + dy, 0.4),
+                         0.4, 0.15,
+                         material=MATS["wood_dark"],
+                         collection=collection, vertices=16,
+                         rotation=(0, math.pi / 2, 0))
+            add_cylinder(f"CartHub_{side}{lr}", (x + dx, y + dy, 0.4),
+                         0.1, 0.18,
+                         material=MATS["iron"],
+                         collection=collection, vertices=8,
+                         rotation=(0, math.pi / 2, 0))
+    # Hay load
+    for i in range(3):
+        ox = (i - 1) * 0.4
+        add_box(f"CartHay_{i}", (x + ox, y, 1.15), (0.3, 0.9, 0.4),
+                material=MATS["fabric_gold"], collection=collection)
+
+
+def build_carts(collection):
+    build_cart(collection, -10.0, -10.0)
+    build_cart(collection, 10.0, -10.5)
+
+
+def build_stables(collection, x, y):
+    """Wooden stables with stalls."""
+    # Frame
+    add_box("StableFloor", (x, y, 0.05), (4.0, 3.0, 0.1),
+            material=MATS["wood_plank"], collection=collection)
+    add_box("StableBack", (x, y + 1.4, 1.5), (4.0, 0.2, 2.8),
+            material=MATS["wood"], collection=collection)
+    add_box("StableSideL", (x - 1.9, y, 1.5), (0.2, 3.0, 2.8),
+            material=MATS["wood"], collection=collection)
+    add_box("StableSideR", (x + 1.9, y, 1.5), (0.2, 3.0, 2.8),
+            material=MATS["wood"], collection=collection)
+    # Roof (slanted)
+    add_box("StableRoof", (x, y, 3.2), (4.4, 3.4, 0.2),
+            material=MATS["wood_dark"], collection=collection,
+            rotation=(math.radians(-10), 0, 0))
+    # Stalls
+    for i, dx in enumerate([-1.2, 0.0, 1.2]):
+        add_box(f"StallDivider_{i}", (x + dx, y, 1.0), (0.1, 2.8, 2.0),
+                material=MATS["wood_plank"], collection=collection)
+        add_box(f"StallHay_{i}", (x + dx + 0.4, y + 0.8, 0.15),
+                (0.7, 0.9, 0.2),
+                material=MATS["fabric_gold"], collection=collection)
+        # Feed bucket
+        add_cylinder(f"StallBucket_{i}", (x + dx + 0.5, y - 0.8, 0.2),
+                     0.15, 0.3,
+                     material=MATS["wood_dark"],
+                     collection=collection, vertices=10)
+
+
+def build_horse(collection, x, y):
+    """Simple horse figurine."""
+    # Body
+    add_box("HorseBody", (x, y, 1.2), (0.9, 1.6, 0.8),
+            material=MATS["fabric_brown"], collection=collection)
+    # Neck
+    add_box("HorseNeck", (x, y + 0.85, 1.55), (0.35, 0.4, 0.7),
+            material=MATS["fabric_brown"], collection=collection,
+            rotation=(math.radians(-30), 0, 0))
+    # Head
+    add_box("HorseHead", (x, y + 1.15, 1.85), (0.3, 0.5, 0.35),
+            material=MATS["fabric_brown"], collection=collection,
+            rotation=(math.radians(20), 0, 0))
+    # Ears
+    for i, dx in enumerate([-0.1, 0.1]):
+        add_cone(f"HorseEar_{i}", (x + dx, y + 1.35, 2.1),
+                 0.06, 0.0, 0.2,
+                 material=MATS["fabric_brown"],
+                 collection=collection, vertices=6)
+    # Legs
+    for dx, dy in [(-0.35, -0.6), (0.35, -0.6),
+                    (-0.35, 0.6), (0.35, 0.6)]:
+        add_cylinder(f"HorseLeg_{dx}_{dy}",
+                     (x + dx, y + dy, 0.45),
+                     0.1, 0.9,
+                     material=MATS["fabric_brown"],
+                     collection=collection, vertices=8)
+    # Tail
+    add_cylinder("HorseTail", (x, y - 0.9, 1.3), 0.08, 0.7,
+                 material=MATS["fabric_brown"],
+                 collection=collection, vertices=6,
+                 rotation=(math.radians(-20), 0, 0))
+    # Mane
+    add_box("HorseMane", (x, y + 0.85, 1.85), (0.1, 0.35, 0.4),
+            material=MATS["fabric_black"], collection=collection)
+
+
+def build_catapult(collection, x, y, rotation=0):
+    """Siege catapult."""
+    # Base
+    add_box("CatapultBase", (x, y, 0.2), (2.0, 1.2, 0.4),
+            material=MATS["wood_dark"], collection=collection,
+            rotation=(0, 0, rotation))
+    # Side rails
+    for i, dy in enumerate([-0.55, 0.55]):
+        add_box(f"CatapultRail_{i}",
+                (x, y + dy, 0.6), (2.2, 0.1, 0.1),
+                material=MATS["wood"], collection=collection,
+                rotation=(0, 0, rotation))
+    # Upright posts
+    for i, dy in enumerate([-0.5, 0.5]):
+        add_box(f"CatapultPost_{i}",
+                (x + 0.6, y + dy, 1.0), (0.15, 0.15, 1.8),
+                material=MATS["wood_dark"], collection=collection,
+                rotation=(0, 0, rotation))
+    # Arm
+    add_box("CatapultArm", (x + 0.2, y, 1.4), (2.0, 0.15, 0.15),
+            material=MATS["wood"], collection=collection,
+            rotation=(0, math.radians(-25), rotation))
+    # Bucket
+    add_cylinder("CatapultBucket", (x - 0.7, y, 1.9), 0.2, 0.25,
+                 material=MATS["wood_dark"],
+                 collection=collection, vertices=8)
+    # Wheels
+    for i, dy in enumerate([-0.6, 0.6]):
+        for j, dx in enumerate([-0.7, 0.7]):
+            add_cylinder(f"CatapultWheel_{i}_{j}",
+                         (x + dx, y + dy, 0.35),
+                         0.35, 0.15,
+                         material=MATS["wood_dark"],
+                         collection=collection, vertices=14,
+                         rotation=(math.pi / 2, 0, 0))
+
+
+def build_catapults(collection):
+    build_catapult(collection, -14.0, -3.0, math.radians(-20))
+    build_catapult(collection, 14.0, -4.0, math.radians(20))
+
+
 # ================================================================
-# STRUCTURE: WALLS
+# WALLS
 # ================================================================
 def build_wall_segment(name, start, end, height, thickness,
                        material, collection):
@@ -431,8 +951,7 @@ def build_wall_segment(name, start, end, height, thickness,
         name, (cx, cy, height / 2),
         (length, thickness, height),
         material=material, collection=collection,
-        rotation=(0, 0, angle),
-    )
+        rotation=(0, 0, angle))
 
 
 def build_crenellations(name, start, end, wall_height, thickness,
@@ -459,8 +978,7 @@ def build_crenellations(name, start, end, wall_height, thickness,
             f"{name}_{i}", (mx, my, wall_height + CRENEL_HEIGHT / 2),
             (CRENEL_WIDTH, thickness + CRENEL_DEPTH, CRENEL_HEIGHT),
             material=material, collection=collection,
-            rotation=(0, 0, angle),
-        )
+            rotation=(0, 0, angle))
 
 
 def build_back_wall(collection):
@@ -480,12 +998,12 @@ def build_left_wall(collection):
     h = CASTLE_HALF
     t = WALL_THICKNESS
     build_wall_segment("LeftWall", (-h, -h), (-h, h),
-                       WALL_HEIGHT_BACK, t, MATS["stone"], collection)
+                       WALL_HEIGHT_SIDE, t, MATS["stone"], collection)
     build_crenellations("LeftCrenel", (-h, -h), (-h, h),
-                        WALL_HEIGHT_BACK, t, MATS["stone"], collection)
+                        WALL_HEIGHT_SIDE, t, MATS["stone"], collection)
     for i, y in enumerate([-4.0, 0.0, 4.0]):
-        add_box(f"LeftButtress_{i}", (-h - t / 2, y, WALL_HEIGHT_BACK / 2),
-                (0.4, 0.6, WALL_HEIGHT_BACK),
+        add_box(f"LeftButtress_{i}", (-h - t / 2, y, WALL_HEIGHT_SIDE / 2),
+                (0.4, 0.6, WALL_HEIGHT_SIDE),
                 material=MATS["stone_dark"], collection=collection)
 
 
@@ -493,16 +1011,17 @@ def build_right_wall(collection):
     h = CASTLE_HALF
     t = WALL_THICKNESS
     build_wall_segment("RightWall", (h, -h), (h, h),
-                       WALL_HEIGHT_BACK, t, MATS["stone"], collection)
+                       WALL_HEIGHT_SIDE, t, MATS["stone"], collection)
     build_crenellations("RightCrenel", (h, -h), (h, h),
-                        WALL_HEIGHT_BACK, t, MATS["stone"], collection)
+                        WALL_HEIGHT_SIDE, t, MATS["stone"], collection)
     for i, y in enumerate([-4.0, 0.0, 4.0]):
-        add_box(f"RightButtress_{i}", (h + t / 2, y, WALL_HEIGHT_BACK / 2),
-                (0.4, 0.6, WALL_HEIGHT_BACK),
+        add_box(f"RightButtress_{i}", (h + t / 2, y, WALL_HEIGHT_SIDE / 2),
+                (0.4, 0.6, WALL_HEIGHT_SIDE),
                 material=MATS["stone_dark"], collection=collection)
 
 
 def build_front_wall(collection):
+    """Front wall — deliberately LOW so the interior is visible."""
     h = CASTLE_HALF
     t = WALL_THICKNESS
     half_gate = GATE_WIDTH / 2
@@ -517,7 +1036,7 @@ def build_front_wall(collection):
 
 
 # ================================================================
-# STRUCTURE: TOWERS
+# TOWERS
 # ================================================================
 def build_tower(name, x, y, collection):
     add_cylinder(f"{name}_Body", (x, y, TOWER_HEIGHT / 2),
@@ -533,6 +1052,7 @@ def build_tower(name, x, y, collection):
                  material=MATS["stone_dark"], collection=collection,
                  vertices=TOWER_SEGMENTS)
 
+    # Merlons around the top
     n_merlons = 12
     for i in range(n_merlons):
         angle = 2 * math.pi * i / n_merlons
@@ -544,12 +1064,14 @@ def build_tower(name, x, y, collection):
                 material=MATS["stone"], collection=collection,
                 rotation=(0, 0, angle))
 
+    # Cone roof
     add_cone(f"{name}_Roof",
              (x, y, TOWER_HEIGHT + CRENEL_HEIGHT + TOWER_ROOF_HEIGHT / 2),
              TOWER_RADIUS + 0.3, 0.0, TOWER_ROOF_HEIGHT,
              material=MATS["stone_dark"], collection=collection,
              vertices=TOWER_SEGMENTS)
 
+    # Flag pole
     add_cylinder(f"{name}_Pole",
                  (x, y, TOWER_HEIGHT + CRENEL_HEIGHT + TOWER_ROOF_HEIGHT + 1.2),
                  0.05, 2.4,
@@ -559,17 +1081,19 @@ def build_tower(name, x, y, collection):
             (1.2, 0.02, 0.6),
             material=MATS["fabric_red"], collection=collection)
 
-    # Arrow slit facing front
-    add_box(f"{name}_Window",
-            (x + math.cos(math.radians(-90)) * (TOWER_RADIUS - 0.05),
-             y + math.sin(math.radians(-90)) * (TOWER_RADIUS - 0.05),
-             TOWER_HEIGHT * 0.55),
-            (0.15, 0.4, 1.2),
-            material=MATS["stone_dark"], collection=collection)
+    # Arrow slits on 4 sides
+    for i, angle in enumerate([-90, 0, 90, 180]):
+        wx = x + math.cos(math.radians(angle)) * (TOWER_RADIUS - 0.05)
+        wy = y + math.sin(math.radians(angle)) * (TOWER_RADIUS - 0.05)
+        add_box(f"{name}_Window_{i}",
+                (wx, wy, TOWER_HEIGHT * 0.55),
+                (0.15, 0.4, 1.2),
+                material=MATS["stone_dark"], collection=collection,
+                rotation=(0, 0, math.radians(angle)))
 
 
 # ================================================================
-# STRUCTURE: GATE
+# GATE
 # ================================================================
 def build_gate(collection):
     y = -CASTLE_HALF
@@ -588,6 +1112,7 @@ def build_gate(collection):
             (GATE_WIDTH + 2 * GATE_PILLAR_SIZE, WALL_THICKNESS + 0.1, 0.4),
             material=MATS["stone_dark"], collection=collection)
 
+    # Portcullis bars
     n_bars = 7
     for i in range(n_bars):
         bx = -half_gate + 0.2 + i * (GATE_WIDTH - 0.4) / (n_bars - 1)
@@ -625,29 +1150,25 @@ def build_floor(collection):
 
 
 # ================================================================
-# INTERIOR PARTITION WALLS
+# PARTITION WALLS
 # ================================================================
 def build_partition_walls(collection):
     h = 1.4
     t = 0.2
-    # Bedroom on left-front, Kitchen on right-front
     add_box("PartBed_K", (0.0, -2.0, h / 2), (t, 4.0, h),
             material=MATS["stone"], collection=collection)
-    # Library partition (left-back)
     add_box("PartBed_Lib", (-2.0, 0.5, h / 2), (t, 5.0, h),
             material=MATS["stone"], collection=collection)
-    # Front walls of the rooms
     add_box("PartFrontBed", (-4.0, -2.5, h / 2), (5.0, t, h),
             material=MATS["stone"], collection=collection)
     add_box("PartFrontKit", (4.0, -2.5, h / 2), (5.0, t, h),
             material=MATS["stone"], collection=collection)
-    # Short wall between throne room and library back
     add_box("PartBackLib", (-1.0, 5.5, h / 2), (0.2, 2.0, h),
             material=MATS["stone"], collection=collection)
 
 
 # ================================================================
-# FURNITURE: THRONE ROOM
+# DAIS AND THRONE
 # ================================================================
 def build_dais(collection):
     add_box("DaisStep1", (0, 4.7, 0.15), (6.0, 3.0, 0.3),
@@ -678,7 +1199,7 @@ def build_throne(collection):
     add_box("ThroneCushion", (0, 5.0, 1.1), (1.2, 1.0, 0.12),
             material=MATS["fabric_red"], collection=collection)
     for i, (dx, dy) in enumerate([(-0.6, -0.5), (0.6, -0.5),
-                                  (-0.6, 0.5), (0.6, 0.5)]):
+                                   (-0.6, 0.5), (0.6, 0.5)]):
         add_box(f"ThroneLeg_{i}", (dx, 5.0 + dy, 0.75),
                 (0.15, 0.15, 0.4),
                 material=MATS["wood_dark"], collection=collection)
@@ -699,7 +1220,6 @@ def build_long_table(collection):
     add_box("LongTableRunner", (cx, cy, top_z + 0.06),
             (tlen * 0.95, 0.4, 0.02),
             material=MATS["fabric_red"], collection=collection)
-
     for i, dx in enumerate([-1.8, -1.0, -0.2, 0.6, 1.4, 2.0]):
         add_cylinder(f"Plate_{i}", (cx + dx, cy + 0.3, top_z + 0.12),
                      0.16, 0.03,
@@ -717,7 +1237,7 @@ def build_chair(name, location, collection, rotation=0):
             material=MATS["wood"], collection=collection,
             rotation=(0, 0, rotation))
     for i, (dx, dy) in enumerate([(-0.2, -0.2), (0.2, -0.2),
-                                  (-0.2, 0.2), (0.2, 0.2)]):
+                                   (-0.2, 0.2), (0.2, 0.2)]):
         add_box(f"{name}_Leg_{i}", (x + dx, y + dy, z + seat_h / 2),
                 (0.05, 0.05, seat_h),
                 material=MATS["wood_dark"], collection=collection)
@@ -787,10 +1307,8 @@ def build_candelabra(collection, name, x, y, z=0.0):
 
 
 def build_banner(collection, name, x, y, z, facing, color_mat):
-    # Pole
     add_cylinder(f"{name}_Pole", (x, y, z + 0.5), 0.05, 3.0,
                  material=MATS["wood_dark"], collection=collection, vertices=8)
-    # Fabric
     if facing == "south":
         add_box(f"{name}_Fabric", (x, y - 0.05, z - 0.3),
                 (1.0, 0.03, 2.2), material=color_mat, collection=collection)
@@ -800,10 +1318,9 @@ def build_banner(collection, name, x, y, z, facing, color_mat):
     elif facing == "east":
         add_box(f"{name}_Fabric", (x - 0.05, y, z - 0.3),
                 (0.03, 1.0, 2.2), material=color_mat, collection=collection)
-    else:  # west
+    else:
         add_box(f"{name}_Fabric", (x + 0.05, y, z - 0.3),
                 (0.03, 1.0, 2.2), material=color_mat, collection=collection)
-    # Emblem (gold circle)
     add_torus(f"{name}_Emblem", (x, y, z - 0.5), 0.25, 0.03,
               material=MATS["gold"], collection=collection,
               rotation=(math.pi / 2, 0, 0) if facing in ("south", "north")
@@ -828,17 +1345,13 @@ def build_armor_stand(collection):
                  material=MATS["wood_dark"], collection=collection, vertices=12)
     add_cylinder("ArmorPole", (x, y, 1.0), 0.05, 2.0,
                  material=MATS["iron"], collection=collection, vertices=8)
-    # Torso
     add_box("ArmorTorso", (x, y, 1.4), (0.5, 0.3, 0.7),
             material=MATS["steel"], collection=collection)
-    # Helmet
     add_sphere("ArmorHelmet", (x, y, 1.95), 0.22,
                material=MATS["steel"], collection=collection,
                segments=16, rings=12)
-    # Shoulders
     add_box("ArmorShoulders", (x, y, 1.7), (0.7, 0.35, 0.15),
             material=MATS["steel"], collection=collection)
-    # Sword
     add_box("ArmorSword", (x + 0.4, y, 1.2), (0.05, 0.05, 1.0),
             material=MATS["steel"], collection=collection)
     add_box("ArmorSwordGuard", (x + 0.4, y, 1.7), (0.25, 0.1, 0.08),
@@ -846,32 +1359,26 @@ def build_armor_stand(collection):
 
 
 # ================================================================
-# FURNITURE: BEDROOM
+# BEDROOM
 # ================================================================
 def build_bed(collection, name, x, y, rotation=0):
-    # Frame
     add_box(f"{name}_Frame", (x, y, 0.25), (1.6, 2.2, 0.15),
             material=MATS["wood_dark"], collection=collection,
             rotation=(0, 0, rotation))
-    # Legs
     for i, (dx, dy) in enumerate([(-0.7, -1.0), (0.7, -1.0),
-                                  (-0.7, 1.0), (0.7, 1.0)]):
+                                   (-0.7, 1.0), (0.7, 1.0)]):
         add_box(f"{name}_Leg_{i}", (x + dx, y + dy, 0.15),
                 (0.1, 0.1, 0.3),
                 material=MATS["wood_dark"], collection=collection)
-    # Mattress
     add_box(f"{name}_Mattress", (x, y, 0.42), (1.5, 2.1, 0.2),
             material=MATS["fabric_white"], collection=collection,
             rotation=(0, 0, rotation))
-    # Pillow
     add_box(f"{name}_Pillow", (x, y + 0.85, 0.58), (1.2, 0.4, 0.15),
             material=MATS["fabric_white"], collection=collection,
             rotation=(0, 0, rotation))
-    # Blanket
     add_box(f"{name}_Blanket", (x, y - 0.3, 0.55), (1.55, 1.4, 0.06),
             material=MATS["fabric_blue"], collection=collection,
             rotation=(0, 0, rotation))
-    # Headboard
     add_box(f"{name}_Headboard", (x, y + 1.15, 0.6), (1.7, 0.1, 0.8),
             material=MATS["wood_dark"], collection=collection,
             rotation=(0, 0, rotation))
@@ -882,7 +1389,6 @@ def build_nightstand(collection, name, x, y):
             material=MATS["wood_dark"], collection=collection)
     add_box(f"{name}_Top", (x, y, 0.63), (0.55, 0.55, 0.05),
             material=MATS["wood"], collection=collection)
-    # Drawer
     add_box(f"{name}_Drawer", (x, y - 0.26, 0.35), (0.4, 0.03, 0.2),
             material=MATS["wood"], collection=collection)
     add_sphere(f"{name}_Knob", (x, y - 0.28, 0.35), 0.03,
@@ -897,7 +1403,6 @@ def build_chest(collection, name, x, y, rotation=0):
     add_box(f"{name}_Lid", (x, y, 0.62), (0.92, 0.57, 0.08),
             material=MATS["wood"], collection=collection,
             rotation=(0, 0, rotation))
-    # Iron bands
     for i, dx in enumerate([-0.3, 0.3]):
         add_box(f"{name}_Band_{i}", (x + dx, y, 0.3),
                 (0.06, 0.6, 0.6),
@@ -907,30 +1412,62 @@ def build_chest(collection, name, x, y, rotation=0):
             material=MATS["gold"], collection=collection)
 
 
+def build_wardrobe(collection, x, y, rotation=0):
+    add_box("WardrobeBody", (x, y, 1.2), (1.4, 0.6, 2.4),
+            material=MATS["wood_dark"], collection=collection,
+            rotation=(0, 0, rotation))
+    add_box("WardrobeTop", (x, y, 2.45), (1.5, 0.7, 0.1),
+            material=MATS["wood"], collection=collection,
+            rotation=(0, 0, rotation))
+    add_box("WardrobeBase", (x, y, 0.05), (1.5, 0.7, 0.1),
+            material=MATS["wood"], collection=collection,
+            rotation=(0, 0, rotation))
+    # Doors
+    add_box("WardrobeDoorL", (x - 0.35, y - 0.31, 1.3),
+            (0.65, 0.05, 2.1), material=MATS["wood"],
+            collection=collection, rotation=(0, 0, rotation))
+    add_box("WardrobeDoorR", (x + 0.35, y - 0.31, 1.3),
+            (0.65, 0.05, 2.1), material=MATS["wood"],
+            collection=collection, rotation=(0, 0, rotation))
+    # Handles
+    for side, dx in [("L", -0.05), ("R", 0.05)]:
+        add_sphere(f"WardrobeHandle_{side}",
+                   (x + dx, y - 0.35, 1.3), 0.04,
+                   material=MATS["gold"], collection=collection,
+                   segments=8, rings=6)
+
+
+def build_mirror(collection, x, y, rotation=0):
+    add_box("MirrorFrame", (x, y, 1.6), (0.9, 0.1, 1.6),
+            material=MATS["wood_dark"], collection=collection,
+            rotation=(0, 0, rotation))
+    add_box("MirrorGlass", (x, y - 0.06, 1.6), (0.75, 0.02, 1.4),
+            material=MATS["silver"], collection=collection,
+            rotation=(0, 0, rotation))
+
+
 def build_bedroom(collection):
     build_bed(collection, "Bed", -4.0, -3.6)
     build_nightstand(collection, "Nightstand", -4.9, -2.2)
     build_chest(collection, "Chest1", -2.7, -4.5)
+    build_wardrobe(collection, -5.3, -4.0, rotation=math.pi / 2)
+    build_mirror(collection, -3.5, -5.6, rotation=0)
     build_rug(collection, "BedroomRug", (-4.0, -3.6, 0.06),
               (2.0, 2.5), MATS["fabric_blue"])
-    # Small candle on nightstand
     build_candelabra(collection, "BedroomCandelabra", -4.9, -2.2, z=0.65)
 
 
 # ================================================================
-# FURNITURE: LIBRARY
+# LIBRARY
 # ================================================================
 def build_bookshelf(collection, name, x, y, rotation=0):
-    # Case
     add_box(f"{name}_Case", (x, y, 1.0), (2.0, 0.4, 2.0),
             material=MATS["wood_dark"], collection=collection,
             rotation=(0, 0, rotation))
-    # Shelves
     for i, z in enumerate([0.3, 0.85, 1.4, 1.9]):
         add_box(f"{name}_Shelf_{i}", (x, y, z), (1.9, 0.45, 0.05),
                 material=MATS["wood"], collection=collection,
                 rotation=(0, 0, rotation))
-    # Books (rows of colored boxes)
     book_colors = [MATS["fabric_red"], MATS["fabric_blue"],
                    MATS["fabric_green"], MATS["fabric_brown"],
                    MATS["fabric_gold"]]
@@ -950,14 +1487,12 @@ def build_reading_table(collection):
     add_box("ReadingTableTop", (x, y, 0.75), (1.2, 0.8, 0.08),
             material=MATS["wood"], collection=collection)
     for i, (dx, dy) in enumerate([(-0.5, -0.3), (0.5, -0.3),
-                                  (-0.5, 0.3), (0.5, 0.3)]):
+                                   (-0.5, 0.3), (0.5, 0.3)]):
         add_box(f"ReadingTableLeg_{i}", (x + dx, y + dy, 0.37),
                 (0.08, 0.08, 0.75),
                 material=MATS["wood_dark"], collection=collection)
-    # Book on the table
     add_box("ReadingBook", (x - 0.1, y, 0.82), (0.3, 0.4, 0.06),
             material=MATS["fabric_red"], collection=collection)
-    # Candle holder
     add_cylinder("ReadingCandleBase", (x + 0.3, y, 0.82), 0.08, 0.04,
                  material=MATS["gold"], collection=collection, vertices=12)
     add_cylinder("ReadingCandle", (x + 0.3, y, 0.95), 0.03, 0.2,
@@ -971,10 +1506,36 @@ def build_stool(collection, name, x, y):
     add_box(f"{name}_Seat", (x, y, 0.4), (0.4, 0.4, 0.06),
             material=MATS["wood"], collection=collection)
     for i, (dx, dy) in enumerate([(-0.15, -0.15), (0.15, -0.15),
-                                  (-0.15, 0.15), (0.15, 0.15)]):
+                                   (-0.15, 0.15), (0.15, 0.15)]):
         add_box(f"{name}_Leg_{i}", (x + dx, y + dy, 0.2),
                 (0.04, 0.04, 0.4),
                 material=MATS["wood_dark"], collection=collection)
+
+
+def build_globe(collection, x, y):
+    add_cylinder("GlobeBase", (x, y, 0.1), 0.35, 0.2,
+                 material=MATS["wood_dark"], collection=collection, vertices=16)
+    add_cylinder("GlobeStand", (x, y, 0.55), 0.06, 0.9,
+                 material=MATS["gold"], collection=collection, vertices=8)
+    add_sphere("GlobeSphere", (x, y, 1.15), 0.35,
+               material=MATS["fabric_blue"],
+               collection=collection, segments=24, rings=16)
+    add_torus("GlobeRing", (x, y, 1.15), 0.4, 0.02,
+              material=MATS["gold"], collection=collection,
+              rotation=(math.radians(23), 0, 0))
+
+
+def build_ladder(collection, x, y, height=2.4):
+    for side, dx in [("L", -0.3), ("R", 0.3)]:
+        add_box(f"LadderRail_{side}", (x + dx, y, height / 2),
+                (0.06, 0.06, height),
+                material=MATS["wood_dark"], collection=collection)
+    n_rungs = 6
+    for i in range(n_rungs):
+        z = 0.25 + i * (height - 0.4) / (n_rungs - 1)
+        add_box(f"LadderRung_{i}", (x, y, z),
+                (0.6, 0.05, 0.05),
+                material=MATS["wood"], collection=collection)
 
 
 def build_library(collection):
@@ -982,18 +1543,19 @@ def build_library(collection):
     build_bookshelf(collection, "BookshelfB", -5.0, 5.2, rotation=math.pi / 2)
     build_reading_table(collection)
     build_stool(collection, "StoolA", -3.5, 2.9)
+    build_globe(collection, -3.5, 5.0)
+    build_ladder(collection, -5.6, 4.3, height=2.4)
     build_rug(collection, "LibraryRug", (-3.5, 3.5, 0.06),
               (3.5, 3.0), MATS["fabric_green"])
 
 
 # ================================================================
-# FURNITURE: KITCHEN
+# KITCHEN
 # ================================================================
 def build_barrel(collection, name, x, y):
     add_cylinder(f"{name}_Body", (x, y, 0.55), 0.35, 1.1,
                  material=MATS["wood_dark"], collection=collection,
                  vertices=16)
-    # Iron bands
     for i, z in enumerate([0.15, 0.55, 0.95]):
         add_torus(f"{name}_Band_{i}", (x, y, z), 0.36, 0.03,
                   material=MATS["iron"], collection=collection)
@@ -1003,7 +1565,6 @@ def build_barrel(collection, name, x, y):
 
 def build_cauldron(collection):
     x, y = 4.5, -3.5
-    # Fire ring
     for i in range(6):
         angle = 2 * math.pi * i / 6
         dx = math.cos(angle) * 0.4
@@ -1012,11 +1573,9 @@ def build_cauldron(collection):
                 (0.15, 0.15, 0.2),
                 material=MATS["stone_dark"], collection=collection,
                 rotation=(0, 0, angle))
-    # Ember
     add_sphere("CauldronFire", (x, y, 0.25), 0.3,
                material=MATS["ember"], collection=collection,
                segments=12, rings=8)
-    # Pot
     add_sphere("CauldronPot", (x, y, 0.6), 0.4,
                material=MATS["iron"], collection=collection,
                segments=20, rings=12)
@@ -1041,7 +1600,6 @@ def build_kitchen_shelf(collection):
     for z in [0.8, 1.4, 2.0]:
         add_box(f"KitchenShelf_{z}", (x, y, z), (1.0, 0.25, 0.05),
                 material=MATS["wood"], collection=collection)
-    # Pots and pans
     add_cylinder("ShelfPotA", (x - 0.3, y, 0.95), 0.12, 0.2,
                  material=MATS["bronze"], collection=collection, vertices=12)
     add_cylinder("ShelfPotB", (x + 0.2, y, 1.55), 0.15, 0.2,
@@ -1049,6 +1607,59 @@ def build_kitchen_shelf(collection):
     add_cylinder("ShelfJug", (x - 0.2, y, 2.15), 0.1, 0.25,
                  material=MATS["fabric_white"], collection=collection,
                  vertices=12)
+
+
+def build_kitchen_stove(collection, x, y):
+    add_box("StoveBase", (x, y, 0.4), (1.6, 1.0, 0.8),
+            material=MATS["stone_dark"], collection=collection)
+    add_box("StoveTop", (x, y, 0.85), (1.7, 1.1, 0.1),
+            material=MATS["stone"], collection=collection)
+    # Chimney
+    add_box("StoveChimney", (x + 0.5, y + 0.3, 2.4), (0.5, 0.5, 3.0),
+            material=MATS["stone_dark"], collection=collection)
+    # Fire hole
+    add_box("StoveHole", (x - 0.2, y - 0.45, 0.3), (0.5, 0.05, 0.4),
+            material=MATS["ember"], collection=collection)
+    # Pot on top
+    add_cylinder("StovePot", (x - 0.2, y, 1.05), 0.25, 0.3,
+                 material=MATS["bronze"], collection=collection, vertices=16)
+    add_cylinder("StovePotLid", (x - 0.2, y, 1.22), 0.28, 0.05,
+                 material=MATS["bronze"], collection=collection, vertices=16)
+
+
+def build_hanging_pots(collection, x, y):
+    add_box("HangingRackBar", (x, y, 2.0), (1.8, 0.06, 0.06),
+            material=MATS["iron"], collection=collection)
+    for i, dx in enumerate([-0.7, -0.2, 0.3, 0.8]):
+        add_cylinder(f"HangingChain_{i}", (x + dx, y, 1.85),
+                     0.015, 0.25,
+                     material=MATS["iron"], collection=collection, vertices=6)
+        add_cylinder(f"HangingPot_{i}", (x + dx, y, 1.6),
+                     0.12 - i * 0.01, 0.2 - i * 0.02,
+                     material=MATS["bronze"], collection=collection,
+                     vertices=12)
+
+
+def build_herb_bundles(collection, x, y):
+    for i in range(4):
+        dx = (i - 1.5) * 0.35
+        add_cylinder(f"HerbBundle_{i}", (x + dx, y, 1.7),
+                     0.08, 0.35,
+                     material=MATS["fabric_green"],
+                     collection=collection, vertices=8)
+        add_cylinder(f"HerbTie_{i}", (x + dx, y, 1.55),
+                     0.09, 0.03,
+                     material=MATS["fabric_brown"],
+                     collection=collection, vertices=8)
+
+
+def build_cutting_board(collection, x, y):
+    add_box("CuttingBoard", (x, y, 0.85), (0.6, 0.35, 0.04),
+            material=MATS["wood"], collection=collection)
+    add_box("CuttingKnife", (x + 0.15, y, 0.9), (0.3, 0.04, 0.02),
+            material=MATS["steel"], collection=collection)
+    add_box("CuttingKnifeHandle", (x - 0.05, y, 0.9), (0.1, 0.05, 0.03),
+            material=MATS["wood_dark"], collection=collection)
 
 
 def build_kitchen(collection):
@@ -1059,6 +1670,9 @@ def build_kitchen(collection):
     build_cauldron(collection)
     build_sacks(collection)
     build_kitchen_shelf(collection)
+    build_kitchen_stove(collection, 5.5, -2.9)
+    build_hanging_pots(collection, 4.5, -4.5)
+    build_herb_bundles(collection, 5.5, -4.0)
 
 
 # ================================================================
@@ -1066,25 +1680,20 @@ def build_kitchen(collection):
 # ================================================================
 def build_fireplace(collection):
     x, y = 3.5, 5.5
-    # Mantel
     add_box("FireplaceMantel", (x, y, 2.4), (2.4, 0.6, 0.3),
             material=MATS["stone_dark"], collection=collection)
-    # Sides
     for side, dx in [("L", -0.9), ("R", 0.9)]:
         add_box(f"FireplaceSide_{side}", (x + dx, y, 1.2),
                 (0.4, 0.5, 2.4),
                 material=MATS["stone"], collection=collection)
-    # Back (behind chimney)
     add_box("FireplaceBack", (x, y + 0.2, 1.2), (2.0, 0.2, 2.4),
             material=MATS["stone_dark"], collection=collection)
-    # Fire
     add_sphere("FireplaceFire", (x, y - 0.1, 0.4), 0.4,
                material=MATS["fire"], collection=collection,
                segments=16, rings=12)
     add_sphere("FireplaceEmber", (x, y - 0.1, 0.15), 0.3,
                material=MATS["ember"], collection=collection,
                segments=12, rings=8)
-    # Logs
     for i, (dx, dz) in enumerate([(-0.3, 0.15), (0.1, 0.15), (0.35, 0.2)]):
         add_cylinder(f"FireplaceLog_{i}", (x + dx, y - 0.05, dz),
                      0.08, 0.6,
@@ -1094,10 +1703,9 @@ def build_fireplace(collection):
 
 
 # ================================================================
-# WINDOWS IN SIDE WALLS
+# WINDOWS
 # ================================================================
 def build_window(collection, name, x, y, wall_side):
-    """Decorative window cut into a side wall (visual only)."""
     if wall_side == "left":
         add_box(f"{name}_Frame",
                 (x, y, 4.5), (0.5, 1.2, 1.6),
@@ -1105,7 +1713,7 @@ def build_window(collection, name, x, y, wall_side):
         add_box(f"{name}_Glass",
                 (x + 0.05, y, 4.5), (0.1, 1.0, 1.4),
                 material=MATS["window_light"], collection=collection)
-    else:  # right
+    else:
         add_box(f"{name}_Frame",
                 (x, y, 4.5), (0.5, 1.2, 1.6),
                 material=MATS["stone_dark"], collection=collection)
@@ -1122,10 +1730,197 @@ def build_windows(collection):
 
 
 # ================================================================
-# BANNERS AND DECORATIONS
+# STAINED GLASS WINDOW
+# ================================================================
+def build_stained_glass_window(collection, name, x, y, wall_side):
+    """Decorative stained-glass window on a wall."""
+    glass_mats = [MATS["glass_red"], MATS["glass_blue"],
+                  MATS["glass_green"], MATS["glass_yellow"]]
+    if wall_side == "back":
+        add_box(f"{name}_Frame", (x, y - 0.4, 4.5),
+                (1.4, 0.4, 2.0),
+                material=MATS["stone_dark"], collection=collection)
+        # Colored panes arranged in 2x3 grid
+        for i in range(2):
+            for j in range(3):
+                px = x - 0.3 + i * 0.6
+                pz = 3.7 + j * 0.55
+                mat = glass_mats[(i * 3 + j) % len(glass_mats)]
+                add_box(f"{name}_Pane_{i}_{j}",
+                        (px, y - 0.45, pz),
+                        (0.5, 0.05, 0.45),
+                        material=mat, collection=collection)
+        # Cross mullion
+        add_box(f"{name}_MullionV", (x, y - 0.5, 4.5),
+                (0.08, 0.08, 1.9),
+                material=MATS["stone_dark"], collection=collection)
+        add_box(f"{name}_MullionH", (x, y - 0.5, 4.5),
+                (1.2, 0.08, 0.08),
+                material=MATS["stone_dark"], collection=collection)
+
+
+# ================================================================
+# CHAPEL
+# ================================================================
+def build_chapel(collection):
+    """Small chapel in the back-right corner."""
+    cx, cy = 4.5, 4.5
+
+    # Altar platform
+    add_box("AltarStep", (cx, cy, 0.1), (2.4, 1.2, 0.2),
+            material=MATS["stone_light"], collection=collection)
+    add_box("AltarBody", (cx, cy, 0.5), (1.8, 0.8, 0.8),
+            material=MATS["stone"], collection=collection)
+    add_box("AltarTop", (cx, cy, 0.95), (2.0, 0.9, 0.1),
+            material=MATS["stone_light"], collection=collection)
+
+    # Cross on altar
+    add_box("AltarCrossV", (cx, cy, 1.35), (0.08, 0.08, 0.7),
+            material=MATS["gold"], collection=collection)
+    add_box("AltarCrossH", (cx, cy, 1.5), (0.35, 0.08, 0.08),
+            material=MATS["gold"], collection=collection)
+
+    # Candles on altar
+    for i, dx in enumerate([-0.5, 0.5]):
+        add_cylinder(f"AltarCandle_{i}", (cx + dx, cy, 1.1),
+                     0.04, 0.3,
+                     material=MATS["fabric_white"],
+                     collection=collection, vertices=8)
+        add_sphere(f"AltarCandleFlame_{i}", (cx + dx, cy, 1.3),
+                   0.05, material=MATS["candle"],
+                   collection=collection, segments=8, rings=6)
+
+    # Pews
+    for i, dy in enumerate([-1.0, -1.5]):
+        px = cx
+        py = cy + dy - 1.5
+        add_box(f"PewSeat_{i}", (px, py, 0.45),
+                (1.8, 0.35, 0.08),
+                material=MATS["wood"], collection=collection)
+        add_box(f"PewBack_{i}", (px, py + 0.15, 0.75),
+                (1.8, 0.08, 0.6),
+                material=MATS["wood"], collection=collection)
+        for j, dx in enumerate([-0.75, 0.75]):
+            add_box(f"PewLeg_{i}_{j}", (px + dx, py, 0.22),
+                    (0.08, 0.35, 0.45),
+                    material=MATS["wood_dark"], collection=collection)
+
+    # Rug
+    build_rug(collection, "ChapelRug", (cx, cy - 1.2, 0.06),
+              (1.8, 2.5), MATS["fabric_purple"])
+
+
+# ================================================================
+# TREASURE ROOM
+# ================================================================
+def build_treasure_room(collection):
+    """Small treasure display in a corner of the throne room."""
+    x, y = -4.5, 3.0
+    # Multiple chests
+    build_chest(collection, "TreasureChestA", x, y, rotation=0)
+    build_chest(collection, "TreasureChestB", x + 1.0, y + 0.3,
+                rotation=math.radians(15))
+    build_chest(collection, "TreasureChestC", x - 0.4, y + 1.0,
+                rotation=math.radians(-10))
+    # Gold piles
+    for i, (px, py) in enumerate([
+        (x + 0.5, y - 0.5),
+        (x - 0.5, y + 0.5),
+        (x + 0.2, y + 0.7),
+    ]):
+        for j in range(6):
+            import random
+            rng = random.Random(i * 10 + j)
+            ox = rng.uniform(-0.15, 0.15)
+            oy = rng.uniform(-0.15, 0.15)
+            oz = rng.uniform(0.05, 0.15)
+            add_cylinder(f"Coin_{i}_{j}", (px + ox, py + oy, oz),
+                         0.05, 0.02,
+                         material=MATS["gold"],
+                         collection=collection, vertices=8)
+    # Crown on top of chest
+    add_torus("CrownBase", (x, y - 0.1, 0.75), 0.12, 0.02,
+              material=MATS["gold"], collection=collection)
+    for i in range(4):
+        angle = 2 * math.pi * i / 4
+        dx = math.cos(angle) * 0.1
+        dy = math.sin(angle) * 0.1
+        add_cone(f"CrownSpike_{i}", (x + dx, y - 0.1 + dy, 0.85),
+                 0.03, 0.0, 0.1,
+                 material=MATS["gold"],
+                 collection=collection, vertices=6)
+    add_sphere("CrownJewel", (x, y - 0.1, 0.72), 0.04,
+               material=MATS["gem_ruby"], collection=collection,
+               segments=8, rings=6)
+
+
+# ================================================================
+# WEAPON RACK
+# ================================================================
+def build_weapon_rack(collection, x, y):
+    """Rack with swords, spears, and shields."""
+    # Backing
+    add_box("WeaponRackBack", (x, y + 0.2, 1.5),
+            (2.4, 0.1, 2.4),
+            material=MATS["wood_dark"], collection=collection)
+    # Horizontal rails
+    for z in [0.5, 2.5]:
+        add_box(f"WeaponRackRail_{z}", (x, y, z),
+                (2.4, 0.15, 0.1),
+                material=MATS["wood"], collection=collection)
+
+    # Swords
+    for i, dx in enumerate([-0.8, -0.4, 0.0]):
+        add_box(f"SwordBlade_{i}", (x + dx, y - 0.1, 1.6),
+                (0.06, 0.06, 1.6),
+                material=MATS["steel"], collection=collection)
+        add_box(f"SwordHilt_{i}", (x + dx, y - 0.1, 0.85),
+                (0.15, 0.1, 0.15),
+                material=MATS["gold"], collection=collection)
+
+    # Spears
+    for i, dx in enumerate([0.5, 0.9]):
+        add_box(f"SpearShaft_{i}", (x + dx, y - 0.1, 1.5),
+                (0.05, 0.05, 2.4),
+                material=MATS["wood"], collection=collection)
+        add_cone(f"SpearTip_{i}", (x + dx, y - 0.1, 2.85),
+                 0.06, 0.0, 0.3,
+                 material=MATS["steel"],
+                 collection=collection, vertices=6)
+
+    # Shield on the wall
+    add_box("WallShield", (x - 1.2, y - 0.05, 1.5),
+            (0.6, 0.1, 0.8),
+            material=MATS["steel"], collection=collection)
+    add_box("WallShieldStripe", (x - 1.2, y - 0.1, 1.5),
+            (0.15, 0.05, 0.7),
+            material=MATS["fabric_red"], collection=collection)
+    add_sphere("WallShieldBoss", (x - 1.2, y - 0.1, 1.5), 0.1,
+               material=MATS["gold"], collection=collection,
+               segments=12, rings=8)
+
+
+# ================================================================
+# DUNGEON TRAPDOOR
+# ================================================================
+def build_trapdoor(collection, x, y):
+    add_box("TrapdoorFrame", (x, y, 0.15), (1.6, 1.6, 0.1),
+            material=MATS["stone_dark"], collection=collection)
+    add_box("TrapdoorHatch", (x, y, 0.22), (1.4, 1.4, 0.06),
+            material=MATS["wood_dark"], collection=collection)
+    add_box("TrapdoorHandle", (x + 0.5, y, 0.28), (0.15, 0.05, 0.05),
+            material=MATS["iron"], collection=collection)
+    # Hinges
+    for dx in [-0.5, 0.5]:
+        add_box(f"TrapdoorHinge_{dx}", (x + dx, y - 0.65, 0.25),
+                (0.15, 0.1, 0.04),
+                material=MATS["iron"], collection=collection)
+
+
+# ================================================================
+# THRONE ROOM DECORATIONS
 # ================================================================
 def build_throne_room_decorations(collection):
-    # Banners on back wall
     build_banner(collection, "BannerBack_C", 0.0, CASTLE_HALF - 0.35,
                  5.0, "south", MATS["fabric_red"])
     build_banner(collection, "BannerBack_L", -3.0, CASTLE_HALF - 0.35,
@@ -1133,7 +1928,6 @@ def build_throne_room_decorations(collection):
     build_banner(collection, "BannerBack_R", 3.0, CASTLE_HALF - 0.35,
                  5.0, "south", MATS["fabric_red"])
 
-    # Torches on the walls
     for i, x in enumerate([-5.8, -3.5, 3.5, 5.8]):
         build_torch(collection, f"Torch_Back_{i}", x, CASTLE_HALF - 0.35,
                     3.0, "north")
@@ -1143,11 +1937,9 @@ def build_throne_room_decorations(collection):
         build_torch(collection, f"Torch_Right_{i}", CASTLE_HALF - 0.35, y,
                     3.0, "right")
 
-    # Candelabras beside the throne
     build_candelabra(collection, "ThroneCandelabra_L", -1.5, 5.5, z=0.6)
     build_candelabra(collection, "ThroneCandelabra_R", 1.5, 5.5, z=0.6)
 
-    # Rug under the long table
     build_rug(collection, "ThroneRug", (0, 1.5, 0.065),
               (5.0, 4.0), MATS["fabric_purple"])
 
@@ -1164,7 +1956,8 @@ def build_sun(collection):
     link_to_collection(sun, collection)
 
 
-def build_point_light(collection, name, x, y, z, energy=80, color=(1, 0.75, 0.4)):
+def build_point_light(collection, name, x, y, z, energy=80,
+                       color=(1, 0.75, 0.4)):
     bpy.ops.object.light_add(type='POINT', location=(x, y, z))
     light = bpy.context.active_object
     light.name = name
@@ -1183,6 +1976,8 @@ def build_lights(collection):
     build_point_light(collection, "L_Lib", -3.5, 3.5, 2.0, 40, (1, 0.8, 0.5))
     build_point_light(collection, "L_Kit", 4.5, -3.5, 2.0, 50, (1, 0.6, 0.3))
     build_point_light(collection, "L_Fire", 3.5, 5.3, 1.0, 60, (1, 0.5, 0.2))
+    build_point_light(collection, "L_Chapel", 4.5, 4.5, 2.0, 40, (1, 0.85, 0.6))
+    build_point_light(collection, "L_Treasure", -4.5, 3.0, 1.5, 30, (1, 0.9, 0.5))
 
 
 # ================================================================
@@ -1209,7 +2004,6 @@ def build_camera(collection):
 # EXPORT
 # ================================================================
 def export_glb(filepath):
-    """Export the full scene to GLB."""
     bpy.ops.export_scene.gltf(
         filepath=filepath,
         export_format='GLB',
@@ -1222,9 +2016,11 @@ def export_glb(filepath):
 
 
 def compute_output_path():
-    """Return an absolute path for the output GLB."""
+    """Compute absolute output path (out/model.glb)."""
     try:
         blend_dir = pathlib.Path(bpy.data.filepath).parent
+        if str(blend_dir) == "":
+            blend_dir = pathlib.Path.cwd()
     except Exception:
         blend_dir = pathlib.Path.cwd()
     out_dir = blend_dir / EXPORT_DIR_NAME
@@ -1240,46 +2036,62 @@ def main():
     print("Building procedural castle scene…")
     print("=" * 60)
 
-    # 1. Reset the scene
+    # Reset
     clear_scene()
-
-    # 2. Build materials
     build_all_materials()
 
-    # 3. Organize objects into logical collections
-    coll_ground   = create_collection("Ground")
-    coll_struct   = create_collection("Structure")
-    coll_towers   = create_collection("Towers")
-    coll_floor    = create_collection("FloorAndWalls")
-    coll_furniture= create_collection("Furniture")
-    coll_decor    = create_collection("Decorations")
-    coll_light    = create_collection("Lighting")
-    coll_cam      = create_collection("Cameras")
+    # Collections
+    coll_ground    = create_collection("Ground")
+    coll_outdoor   = create_collection("Outdoor")
+    coll_moat      = create_collection("Moat")
+    coll_struct    = create_collection("Structure")
+    coll_towers    = create_collection("Towers")
+    coll_floor     = create_collection("FloorAndWalls")
+    coll_furniture = create_collection("Furniture")
+    coll_decor     = create_collection("Decorations")
+    coll_light     = create_collection("Lighting")
+    coll_cam       = create_collection("Cameras")
 
-    # 4. Outdoor geometry
+    # Ground and outdoor
     build_ground(coll_ground)
-    build_outdoor_well(coll_ground, 10.0, -3.0)
-    build_horse_trough(coll_ground, -9.0, -3.0)
+    build_moat(coll_moat)
+    build_drawbridge(coll_outdoor)
+    build_stairs(coll_outdoor)
+    build_trees(coll_outdoor)
+    build_bushes(coll_outdoor)
+    build_flowers(coll_outdoor)
+    build_well(coll_outdoor, 10.0, -3.0)
+    build_horse_trough(coll_outdoor, -9.0, -3.0)
+    build_fountain(coll_outdoor, -10.5, 6.0)
+    build_statue(coll_outdoor, 10.5, 6.0)
+    build_benches(coll_outdoor)
+    build_lamps(coll_outdoor)
+    build_carts(coll_outdoor)
+    build_stables(coll_outdoor, 12.5, -11.0)
+    build_horse(coll_outdoor, 12.5, -11.0)
+    build_catapults(coll_outdoor)
 
-    # 5. Structure
+    # Structure
     build_back_wall(coll_struct)
     build_left_wall(coll_struct)
     build_right_wall(coll_struct)
     build_front_wall(coll_struct)
     build_gate(coll_struct)
 
-    # 6. Towers
+    # Towers
     build_tower("TowerBL", -CASTLE_HALF, -CASTLE_HALF, coll_towers)
     build_tower("TowerBR",  CASTLE_HALF, -CASTLE_HALF, coll_towers)
     build_tower("TowerTL", -CASTLE_HALF,  CASTLE_HALF, coll_towers)
     build_tower("TowerTR",  CASTLE_HALF,  CASTLE_HALF, coll_towers)
 
-    # 7. Floors and interior partitions
+    # Floors and partitions
     build_floor(coll_floor)
     build_partition_walls(coll_floor)
     build_windows(coll_struct)
+    build_stained_glass_window(coll_struct, "StainedWin1",
+                                0.0, CASTLE_HALF, "back")
 
-    # 8. Throne room
+    # Throne room
     build_dais(coll_furniture)
     build_throne(coll_furniture)
     build_long_table(coll_furniture)
@@ -1287,26 +2099,38 @@ def main():
     build_chandelier(coll_decor)
     build_fireplace(coll_furniture)
 
-    # 9. Bedroom
+    # Bedroom
     build_bedroom(coll_furniture)
 
-    # 10. Library
+    # Library
     build_library(coll_furniture)
 
-    # 11. Kitchen
+    # Kitchen
     build_kitchen(coll_furniture)
 
-    # 12. Decorations
-    build_throne_room_decorations(coll_decor)
+    # Chapel
+    build_chapel(coll_furniture)
+
+    # Treasure room
+    build_treasure_room(coll_decor)
+
+    # Weapon rack and armor
+    build_weapon_rack(coll_decor, -3.5, -5.4)
     build_armor_stand(coll_decor)
 
-    # 13. Lighting
+    # Trapdoor (dungeon entrance)
+    build_trapdoor(coll_floor, 3.0, 2.5)
+
+    # Decorations
+    build_throne_room_decorations(coll_decor)
+
+    # Lighting
     build_lights(coll_light)
 
-    # 14. Camera
+    # Camera
     build_camera(coll_cam)
 
-    # 15. Export
+    # Export
     out_path = compute_output_path()
     export_glb(str(out_path))
     print(f"Exported: {out_path}")

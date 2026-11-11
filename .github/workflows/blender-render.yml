@@ -10,7 +10,7 @@ on:
       output:
         description: 'GLB output filename (inside out/)'
         required: false
-        default: 'castle.glb'
+        default: 'model.glb'
 
 jobs:
   render:
