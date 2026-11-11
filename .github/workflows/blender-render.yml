@@ -1,0 +1,54 @@
+name: Blender Render
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: 'Python script to run with Blender'
+        required: false
+        default: 'main.py'
+      output:
+        description: 'GLB output filename (inside out/)'
+        required: false
+        default: 'castle.glb'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download and Install Blender 4.2 LTS
+        run: |
+          wget -q https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz
+          tar -xf blender-4.2.3-linux-x64.tar.xz
+          mv blender-4.2.3-linux-x64 blender
+          echo "${PWD}/blender" >> $GITHUB_PATH
+
+      - name: Show Blender version
+        run: blender --version
+
+      - name: Run Blender script
+        env:
+          BLENDER_USER_CONFIG: /tmp/blender-config
+        run: |
+          mkdir -p out
+          blender --background --factory-startup --python-exit-code 1 --python "${{ inputs.script }}"
+
+      - name: Verify GLB exists
+        run: |
+          if [ ! -f "out/${{ inputs.output }}" ]; then
+            echo "ERROR: out/${{ inputs.output }} was not created"
+            exit 1
+          fi
+          ls -la out/
+
+      - name: Upload GLB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: out/${{ inputs.output }}
+          if-no-files-found: error
+          retention-days: 7
